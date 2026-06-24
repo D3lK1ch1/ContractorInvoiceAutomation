@@ -1,0 +1,13 @@
+## .NET
+bin/
+obj/
+*.user
+
+## VS / Rider
+.vs/
+.idea/
+
+## SQLite local dev DB
+*.db
+*.db-shm
+*.db-wal

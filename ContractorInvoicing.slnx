@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ContractorInvoicing.Domain/ContractorInvoicing.Domain.csproj" />
+    <Project Path="src/ContractorInvoicing.Infrastructure/ContractorInvoicing.Infrastructure.csproj" />
+    <Project Path="src/ContractorInvoicing.Web/ContractorInvoicing.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ContractorInvoicing.Tests/ContractorInvoicing.Tests.csproj" />
+  </Folder>
+</Solution>
