@@ -9,6 +9,7 @@ public class Client
     public string? Notes { get; set; }
     public int? DefaultPaymentTermsDays { get; set; }
     public decimal? DefaultHourlyRate { get; set; }
+    public int NextInvoiceSequence { get; set; } = 1;
     public bool IsArchived { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
