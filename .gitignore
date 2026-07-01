@@ -11,3 +11,6 @@ obj/
 *.db
 *.db-shm
 *.db-wal
+
+## Local session notes — may contain real client names or rates
+Notes/
