@@ -1,0 +1,171 @@
+@page "/clients"
+@rendermode InteractiveServer
+@using System.ComponentModel.DataAnnotations
+@using System.Globalization
+@using ContractorInvoicing.Domain.Entities
+@using ContractorInvoicing.Domain.Validation
+@using ContractorInvoicing.Infrastructure.Data
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<ContractorInvoicingDbContext> DbFactory
+
+<PageTitle>Clients</PageTitle>
+
+<h1>Clients</h1>
+
+<EditForm Model="newClient" OnValidSubmit="SaveClient" FormName="NewClientForm">
+    <DataAnnotationsValidator />
+    <ValidationSummary />
+
+    <div class="mb-3">
+        <label class="form-label">Contact Name</label>
+        <InputText class="form-control" @bind-Value="newClient.ContactName" />
+    </div>
+    <div class="mb-3">
+        <label class="form-label">Business Name</label>
+        <InputText class="form-control" @bind-Value="newClient.BusinessName" />
+    </div>
+    <div class="mb-3">
+        <label class="form-label">Email</label>
+        <InputText class="form-control" @bind-Value="newClient.Email" />
+    </div>
+    <div class="mb-3">
+        <label class="form-label">ABN</label>
+        <InputText class="form-control" @bind-Value="newClient.Abn" />
+        <div class="form-text">Optional — needed on invoices for business clients. Leave blank if not provided.</div>
+    </div>
+    <div class="mb-3">
+        <label class="form-label">Default Payment Terms (days)</label>
+        <InputNumber class="form-control" @bind-Value="newClient.DefaultPaymentTermsDays" />
+        <div class="form-text">How many days you give this client to pay after the invoice is issued (e.g. 14 = Net 14).</div>
+    </div>
+    <div class="mb-3">
+        <label class="form-label">Default Hourly Rate (AUD)</label>
+        <InputNumber class="form-control" @bind-Value="newClient.DefaultHourlyRate" />
+        <div class="form-text">Only for hourly-rate clients — pre-fills invoice line items, still editable per invoice. Leave blank for project/fixed-price clients.</div>
+    </div>
+
+    <button type="submit" class="btn btn-primary">Save Client</button>
+</EditForm>
+
+@if (errorMessage is not null)
+{
+    <p class="text-danger">@errorMessage</p>
+}
+
+<h2 class="mt-4">Existing Clients</h2>
+
+@if (clients is null)
+{
+    <p><em>Loading...</em></p>
+}
+else if (clients.Count == 0)
+{
+    <p><em>No clients yet.</em></p>
+}
+else
+{
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Contact</th>
+                <th>Business</th>
+                <th>Email</th>
+                <th>ABN</th>
+                <th>Payment Terms</th>
+                <th>Hourly Rate</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var client in clients)
+            {
+                <tr>
+                    <td>@client.ContactName</td>
+                    <td>@client.BusinessName</td>
+                    <td>@client.Email</td>
+                    <td>@(client.Abn ?? "—")</td>
+                    <td>@(client.DefaultPaymentTermsDays?.ToString() ?? "—")</td>
+                    <td>@(client.DefaultHourlyRate?.ToString("C", AudCulture) ?? "—")</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private static readonly CultureInfo AudCulture = CultureInfo.GetCultureInfo("en-AU");
+
+    private ClientFormModel newClient = new();
+    private List<Client>? clients;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadClients();
+    }
+
+    private async Task LoadClients()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        clients = await db.Clients
+            .Where(c => !c.IsArchived)
+            .OrderBy(c => c.BusinessName)
+            .ToListAsync();
+    }
+
+    private async Task SaveClient()
+    {
+        errorMessage = null;
+
+        if (!string.IsNullOrWhiteSpace(newClient.Abn) && !AbnValidator.IsValid(newClient.Abn))
+        {
+            errorMessage = "That ABN doesn't pass the ATO check-digit validation. Double-check the 11 digits, or leave it blank.";
+            return;
+        }
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var client = new Client
+            {
+                ContactName = newClient.ContactName,
+                BusinessName = newClient.BusinessName,
+                Email = newClient.Email,
+                Abn = string.IsNullOrWhiteSpace(newClient.Abn) ? null : newClient.Abn,
+                DefaultPaymentTermsDays = newClient.DefaultPaymentTermsDays,
+                DefaultHourlyRate = newClient.DefaultHourlyRate,
+                NextInvoiceSequence = 1,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+
+            db.Clients.Add(client);
+            await db.SaveChangesAsync();
+
+            newClient = new();
+            await LoadClients();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Could not save client: {ex.Message}";
+        }
+    }
+
+    private class ClientFormModel
+    {
+        [Required]
+        public string ContactName { get; set; } = string.Empty;
+
+        [Required]
+        public string BusinessName { get; set; } = string.Empty;
+
+        [Required, EmailAddress]
+        public string Email { get; set; } = string.Empty;
+
+        public string? Abn { get; set; }
+
+        public int? DefaultPaymentTermsDays { get; set; }
+
+        public decimal? DefaultHourlyRate { get; set; }
+    }
+}
