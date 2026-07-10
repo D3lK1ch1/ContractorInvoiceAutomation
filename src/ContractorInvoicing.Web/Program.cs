@@ -1,4 +1,7 @@
+using System.Text;
+using ContractorInvoicing.Domain.Services;
 using ContractorInvoicing.Infrastructure.Data;
+using ContractorInvoicing.Infrastructure.Services;
 using ContractorInvoicing.Web.Components;
 using Microsoft.EntityFrameworkCore;
 
@@ -8,8 +11,12 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
-builder.Services.AddDbContext<ContractorInvoicingDbContext>(options =>
+builder.Services.AddDbContextFactory<ContractorInvoicingDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("Default")));
+
+builder.Services.AddScoped<IInvoiceCalculationService, InvoiceCalculationService>();
+builder.Services.AddScoped<IInvoiceNumberService, InvoiceNumberService>();
+builder.Services.AddScoped<IInvoiceCsvService, InvoiceCsvService>();
 
 var app = builder.Build();
 
@@ -28,5 +35,23 @@ app.UseAntiforgery();
 app.MapStaticAssets();
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
+
+app.MapGet("/export/invoices.csv", async (IInvoiceCsvService csvService) =>
+{
+    var csv = await csvService.ExportAllAsync();
+    return Results.File(Encoding.UTF8.GetBytes(csv), "text/csv", "invoices.csv");
+});
+
+app.MapGet("/export/invoices/{id:int}.csv", async (int id, IInvoiceCsvService csvService) =>
+{
+    var export = await csvService.ExportInvoiceAsync(id);
+    if (export is null)
+        return Results.NotFound();
+
+    var invalidChars = Path.GetInvalidFileNameChars();
+    var safeName = new string(export.InvoiceNumber.Select(c => invalidChars.Contains(c) ? '-' : c).ToArray());
+
+    return Results.File(Encoding.UTF8.GetBytes(export.Csv), "text/csv", $"{safeName}.csv");
+});
 
 app.Run();
