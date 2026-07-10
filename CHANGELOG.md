@@ -3,6 +3,58 @@
 All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## 10/7/2026 v0.1.0 - First walkable UI loop: profile → client → invoice → CSV
+
+### Added
+- Contractor Profile page (`/profile`) — business name, ABN (validated live
+  against `AbnValidator`), email, payment details, GST-registered flag,
+  default payment terms. Single-row, edit-in-place.
+- Clients page (`/clients`) — create and list clients, including a new `Abn`
+  field (optional, validated against the ATO check-digit algorithm when
+  provided — not every client has given one yet).
+- Invoice creation page (`/invoices/new`) — pick a client, dates default from
+  payment terms, add line items with a per-line **Hourly / Fixed Price**
+  toggle (Hourly shows Hours + Rate; Fixed Price shows a single Amount field,
+  no hours), totals recalculate live via the existing
+  `InvoiceCalculationService`, saves as Draft and generates the invoice
+  number via the existing `InvoiceNumberService`.
+- Invoices list page (`/invoices`) with per-invoice and bulk CSV export
+  links.
+- `InvoiceCsvService` (Infrastructure) with two distinct export shapes:
+  a flat one-row-per-invoice bulk export (`ExportAllAsync`, the ATO
+  record-keeping backup path from section 12) and a structured
+  single-invoice document export (`ExportInvoiceAsync` — FROM/BILL TO with
+  ABNs, invoice number, dates, period covered, due terms, line-item table,
+  GST breakdown or not-registered note, payment details — section 6.3).
+  Redesigned mid-session after comparing output against a real reference
+  invoice; the two exports serve different purposes and were wrongly
+  conflated into one shape at first.
+- Two minimal API endpoints for CSV download (`/export/invoices.csv`,
+  `/export/invoices/{id}.csv`) — Blazor Server needs a real HTTP response to
+  trigger a browser download. Filenames use the actual invoice number
+  (sanitized against invalid filesystem characters), not the database ID.
+- `Invoice.Terms` now populated on save (e.g. "Within 14 days of issue"),
+  previously an unused field.
+
+### Changed
+- `Program.cs`: switched `AddDbContext` → `AddDbContextFactory`. Blazor
+  Server interactive components hold their connection open for the session
+  duration; a single shared scoped `DbContext` across that whole lifetime is
+  a known footgun. The factory creates short-lived contexts per operation.
+- Removed `Client.Notes` — nothing in the invoicing flow ever reads it, and
+  it wasn't shown anywhere a user would see it either; decided not worth
+  keeping as a write-only field. Migration drops the column.
+- Currency display pinned to `en-AU` culture explicitly (`CultureInfo`)
+  instead of relying on the server's ambient locale, which was rendering
+  AUD amounts as Malaysian Ringgit on one dev machine.
+
+### Fixed
+- `appsettings.json` had silently lost its `ConnectionStrings.Default` entry
+  as a side effect of an unrelated earlier commit (`be2748f`) — restored.
+  The missing connection string caused SQLite to fall back to an empty,
+  schema-less temp database per connection, surfacing as
+  `SqliteException: no such table`.
+
 ## 24/6/2026 v0.0.0 - Scaffolding the app
 
 ### Added

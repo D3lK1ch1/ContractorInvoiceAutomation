@@ -104,6 +104,8 @@ The user enters reusable invoice details once:
 - GST registration flag.
 - Default payment terms, such as 7, 14, or 30 days.
 
+ABN validation: the app must validate the ABN format using the ATO's published check digit algorithm before saving. A malformed ABN on every issued invoice is a silent, compounding error. Validation should be a pure function in the Domain layer with its own unit tests.
+
 ### 6.2 Client Management
 
 The user can create, edit, and archive clients.
@@ -113,9 +115,10 @@ Client fields:
 - Client contact name.
 - Client business name.
 - Email.
-- Notes.
+- ABN (optional — needed on invoices for business clients; not every client provides one).
 - Default payment terms override.
-- Default hourly rate (optional — pre-fills new line items for this client; a specific invoice can still override it, e.g. a project with a different agreed rate).
+- Default hourly rate (optional — pre-fills new line items for this client; a specific invoice can still override it, e.g. a project with a different agreed rate). This is a pre-fill only, not an enforced billing model — a client can be invoiced hourly on one invoice and at a flat project rate on another, and different clients can be on entirely different pay structures (e.g. a fixed hourly rate vs. a lump sum billed once at project completion).
+- Next invoice sequence (integer, default 1 — the number to use when generating the next invoice for this client). When registering a client who already has invoices outside the app, set this to the correct next number so the sequence picks up from there rather than restarting at 001.
 
 ### 6.3 Invoice Creation
 
@@ -123,7 +126,7 @@ The user can create an invoice from a client.
 
 Invoice behaviour:
 
-- Auto-generate invoice number using a simple sequence.
+- Auto-generate invoice number using the format `{ClientName} Invoice {NNN}` where NNN is a 3-digit zero-padded per-client sequence (e.g. `Acme Invoice 004`). The sequence is per-client and independent — a new client starts at 001 regardless of other clients' invoice counts.
 - Default issue date to today.
 - Default due date from payment terms.
 - Optionally set period covered (start/end date of the billing period).
@@ -138,7 +141,7 @@ Line item types:
 
 - Hourly work: description, hours, rate.
 - Fixed-price work: description, quantity, unit price.
-- Mixed line items should be supported by the same line item model.
+- Mixed line items should be supported by the same line item model. This means an invoice's billing style is decided per line item, not fixed by client or invoice type — a contractor paid hourly at minimum wage and a contractor paid a single project fee at completion are both just different combinations of quantity and unit price on the same model, with no separate "engagement type" concept needed.
 
 ### 6.4 Payment Tracking
 
@@ -195,9 +198,10 @@ Suggested core entities:
 - ContactName
 - BusinessName
 - Email
-- Notes (nullable)
+- Abn (nullable)
 - DefaultPaymentTermsDays
 - DefaultHourlyRate (nullable)
+- NextInvoiceSequence (int, default 1 — incremented after each invoice number is generated for this client)
 - IsArchived
 - CreatedAt
 - UpdatedAt
@@ -396,6 +400,7 @@ V1 is complete when:
 - AI can draft invoice wording and payment reminders through a replaceable service.
 - Demo data is available without exposing real personal or client information.
 - Core business logic has automated tests.
+- A full CSV export of all invoices (not just per-invoice) is producible on demand. This is the defined backup path: the user can export the complete invoice history at any time without manual per-invoice steps. Required because ATO record-keeping obligations run for 5 years and the app stores data in a local SQLite file with no automatic backup.
 
 ## 13. Future Roadmap
 
@@ -415,6 +420,8 @@ Potential v2 features:
 - Multi-tenant SaaS mode.
 - OCR extraction from receipts or supplier invoices.
 - Hosted deployment with authentication.
+- CSV invoice seeding import: allow the user to import a CSV of past invoices (from Google Sheets or similar) to seed real invoice records in the app — not just a starting counter. This preserves the full invoice history before the app existed, so records go back to Invoice 001 and the dashboard reflects true totals. Design separately once the invoice creation UI exists so the import maps to a known, working data shape.
+- Work log document import with AI assistance: import a freeform work log (date, role, hours, notes) and use AI to improve the wording of notes before they become line item descriptions. The import groups entries by role, sums hours, and drafts line items — the user reviews and edits before saving. See 13.1 for the existing design sketch; this note adds the AI wording improvement step to that flow.
 
 ### 13.1 Work Log Import — Design Sketch
 
@@ -441,11 +448,12 @@ Workflow:
 - When creating an invoice, the user picks the client and a date range and imports that client's unbilled entries for that range.
 - The app groups entries by role and sums hours into one draft line item per role.
 - If a day in the range has a role entry with no hours recorded, the app flags it instead of treating it as zero or guessing a value.
+- Before presenting the draft line items, the AI assistant offers improved wording for each line item description based on the raw notes — the user can accept, edit, or ignore the suggestion.
 - The user reviews and can edit the generated line items before saving the invoice — import only prepares a draft, it never creates or sends an invoice on its own.
 
 ## 14. Build Progress
 
-Status as of 2026-06-10.
+Status as of 2026-06-29.
 
 ### Done
 
@@ -457,7 +465,7 @@ Status as of 2026-06-10.
 - Core entities added under `src/ContractorInvoicing.Domain/Entities/`, matching section 7 field-for-field:
   - `ContractorProfile`, `Client`, `Invoice`, `InvoiceLineItem`, `Payment`, `AutomationTask`.
   - Enums: `InvoiceStatus`, `AutomationTaskType`, `AutomationTaskStatus`.
-- `.gitignore` added (bin/obj/SQLite files). Repo is **not yet a git repository** — needs `git init` before commits.
+- `.gitignore` added (bin/obj/SQLite files). Repo initialized with `git init`; 4 commits on `main` (scaffold → DbContext → calculation service → docs).
 - `dotnet build` succeeds, 0 warnings, 0 errors.
 - No tests yet — entities are plain POCOs with no behavior, so nothing meaningful to test until calculation/status logic exists.
 
@@ -469,8 +477,8 @@ Status as of 2026-06-10.
 
 ### Spec decisions — 2026-06-24
 
-Reviewed two real reference files (an actual invoice sent to client Enspyr, and
-a freeform work-log document) against this spec, and checked three GitHub repos
+Reviewed two real reference files (an actual invoice and a freeform work-log
+document) against this spec, and checked three GitHub repos
 found while searching for existing open-source alternatives
 (`microsoft/Azure-Invoice-Process-Automation-Solution-Accelerator`,
 `makerever/rever`, `kalamdreamlabs/kdl-starter-kit`) to decide build-from-scratch
@@ -545,9 +553,126 @@ Resulting spec changes (reflected above, not yet in code — see "Next unit"):
   `UnitTest1.cs` scaffold placeholder.
 - `dotnet test`: 3 passed, 0 failed. `dotnet build`: 0 warnings, 0 errors.
 
+### Done — 2026-06-29
+
+- Repo initialized (`git init`). 4 commits:
+  1. `bcb5b63` — Scaffold solution, projects, and domain entities.
+  2. `c3684b2` — Add EF Core DbContext and SQLite persistence.
+  3. `bfd8f35` — Add InvoiceCalculationService with unit tests.
+  4. `5e3d135` — Add README, CHANGELOG, and project spec.
+- `README.md` and `CHANGELOG.md` written at project root.
+- `SPEC.md` updated to reflect all decisions and build progress from this
+  session (sections 5, 6.1, 6.2, 7, and 14).
+
+### Done — 2026-06-30
+
+- `AbnValidator` added to `src/ContractorInvoicing.Domain/Validation/AbnValidator.cs`.
+  Static class, pure function. Validates ABN using the ATO check digit algorithm
+  (strip spaces, 11 digits, subtract 1 from first digit, multiply by weights
+  [10,1,3,5,7,9,11,13,15,17,19], sum mod 89 == 0). 7 unit tests covering valid
+  ABN with/without spaces, wrong check digit, wrong length, non-numeric, null/empty.
+- `InvoiceStatusService` added to `src/ContractorInvoicing.Domain/Services/`.
+  Interface + implementation. `Apply(invoice, today)` sets `OutstandingBalance`
+  (Total − AmountPaid) and derives status: Draft stays Draft; Paid if balance ≤ 0;
+  Overdue if due date passed and balance remains; PartiallyPaid if some payment
+  exists and balance remains; Sent otherwise. 5 unit tests.
+- `Client.NextInvoiceSequence` (int, default 1) added to entity and spec. EF
+  migration `AddClientNextInvoiceSequence` generated and applied. Sequence is
+  per-client — set to the correct next number when registering a client who already
+  has invoices outside the app (e.g. a client with 3 existing invoices → set to 4).
+- `InvoiceNumberService` added to `src/ContractorInvoicing.Domain/Services/`.
+  Interface + implementation. `Generate(client)` returns `"{BusinessName} Invoice {NNN}"`
+  (3-digit zero-padded) using `client.NextInvoiceSequence`, then increments it
+  in-memory. Caller is responsible for persisting the updated client. 5 unit tests.
+- `dotnet test`: 20 passed, 0 failed. `dotnet build`: 0 warnings, 0 errors.
+- SPEC updated: ABN validation requirement added to section 6.1; invoice number
+  format updated to `{ClientName} Invoice {NNN}` in section 6.3; `NextInvoiceSequence`
+  added to section 7 Client entity; full CSV export on demand added to section 12
+  acceptance criteria; CSV invoice seeding import and work log import with AI
+  wording step added to section 13 roadmap; section 13.1 work log workflow updated
+  with AI suggestion step.
+
+### Done — 2026-07-01
+
+- `PaymentService` added to `src/ContractorInvoicing.Domain/Services/`. Interface +
+  implementation. `RecordPayment(invoice, amount, paidAt, method, reference, notes, today)`
+  validates amount is positive and does not exceed the outstanding balance, builds
+  the `Payment` record, adds `amount` to `invoice.AmountPaid`, then calls
+  `InvoiceStatusService.Apply` to recompute status and outstanding balance. First
+  service that coordinates two domain services together. Sits in Domain; persistence
+  (saving the `Payment` record and updated `Invoice`) is the caller's responsibility.
+  94 lines of unit tests in `PaymentServiceTests.cs`.
+- Committed as `be2748f`. `dotnet build`: 0 warnings, 0 errors. `dotnet test`:
+  27 passed, 0 failed.
+
+### Committed but not yet reflected in this log until now
+
+`InvoiceStatusService` and `Infrastructure.csproj` were still showing as untracked
+files in git status as of this session despite matching the "Done — 2026-06-30"
+entry above — confirmed their contents match what was already documented, so no
+code changes were needed, just noting they should be committed.
+
+### Done — 2026-07-10
+
+First Blazor UI session — went from zero screens to a walkable end-to-end
+loop: Profile → Clients → New Invoice → Invoices/CSV export.
+
+- **`/profile`** — Contractor Profile page. Single-row, edit-in-place, ABN
+  validated live against `AbnValidator`.
+- **`/clients`** — create/list clients. Added `Client.Abn` (nullable,
+  optional, validated when provided) mid-session — a real invoice needs the
+  client's ABN in the "Bill To" section and the entity was missing it.
+  Also added and then removed `Client.Notes` in the same session: added it
+  first, then discarded it because nothing in the invoicing flow reads it —
+  it's not wired into any invoice generation logic, so it was dead weight.
+- **`/invoices/new`** — invoice creation. Each line item has a per-line
+  **Hourly / Fixed Price** toggle rather than one generic quantity field —
+  added after testing showed a required "Hours" field made no sense for a
+  flat project fee. Both modes still map to the same `Quantity`/`UnitPrice`
+  the domain layer already expects.
+- **`/invoices`** — list page with CSV export actions.
+- **`InvoiceCsvService`** (Infrastructure, queries the DB directly) — went
+  through two design iterations. First pass: one flat summary row per
+  invoice for both bulk and single-invoice export. After comparing output
+  against a real reference invoice (PDF/xlsx), this was wrong for the
+  single-invoice case — a contractor handing a draft to a client needs
+  FROM/BILL TO, line items, totals, and payment details, not a database row.
+  Split into two shapes: `ExportAllAsync` stays a flat one-row-per-invoice
+  export (the section 12 backup path), `ExportInvoiceAsync` produces a
+  structured invoice-document CSV (section 6.3).
+- Fixed a regression: `appsettings.json` had lost `ConnectionStrings.Default`
+  as an accidental side effect of the `be2748f` commit, causing SQLite to
+  silently connect to an empty temp database. Restored.
+- Switched `Program.cs` from `AddDbContext` to `AddDbContextFactory` —
+  correct pattern for Blazor Server interactive components.
+- `dotnet build`: 0 warnings, 0 errors. `dotnet test`: 27 passed, 0 failed.
+- Added `Assets/` to `.gitignore` — personal reference files (real client
+  invoice, ABN, bank details) used for comparison must never be committed.
+
+### What CSV export cannot do — and why PDF is still a separate unit
+
+CSV is a plain-text data format; it cannot carry bold text, table borders,
+background colors, or column alignment. The redesigned `ExportInvoiceAsync`
+now has the *right content* (matches a real reference invoice field-for-field)
+but will never have the *visual polish* of the reference PDF — that gap is
+structural to CSV, not a bug to keep testing against. Getting an invoice that
+visually looks like a finished document is `InvoicePdfService` (section 10),
+a distinct, not-yet-started unit.
+
+### Next session's stated focus
+
+Figure out how to visually edit/format the CSV output from within the
+project (as opposed to jumping straight to full PDF generation). Not yet
+scoped — needs a spec conversation first: e.g. does "visually edit" mean
+generating a styled `.xlsx` instead of `.csv` (a real spreadsheet library
+can add borders/bold/color), building a browser-based preview before
+download, or something else. Decide the actual mechanism before writing
+code.
+
 ### Next unit (not started)
 
-- `InvoiceNumberService` and/or `InvoiceStatusService` (sequence generation,
-  Draft/Sent/Partially Paid/Paid/Overdue transitions per section 6.4) — pick
-  whichever Delia wants to tackle first when resuming.
+- Pick between: `AutomationTaskService` (deterministic follow-up task
+  scheduling from due dates and payment state, section 6.5), payment
+  recording UI (wire up the already-built `PaymentService` to a page),
+  or the visual CSV/export formatting work above once scoped.
 
