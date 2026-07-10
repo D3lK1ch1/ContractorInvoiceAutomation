@@ -1,0 +1,161 @@
+@page "/profile"
+@rendermode InteractiveServer
+@using System.ComponentModel.DataAnnotations
+@using ContractorInvoicing.Domain.Entities
+@using ContractorInvoicing.Domain.Validation
+@using ContractorInvoicing.Infrastructure.Data
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<ContractorInvoicingDbContext> DbFactory
+
+<PageTitle>Your Profile</PageTitle>
+
+<h1>Your Profile</h1>
+<p>These details appear on every invoice you generate.</p>
+
+@if (isLoading)
+{
+    <p><em>Loading...</em></p>
+}
+else
+{
+    <EditForm Model="profile" OnValidSubmit="SaveProfile" FormName="ProfileForm">
+        <DataAnnotationsValidator />
+        <ValidationSummary />
+
+        <div class="mb-3">
+            <label class="form-label">Business / Contractor Name</label>
+            <InputText class="form-control" @bind-Value="profile.BusinessName" />
+        </div>
+        <div class="mb-3">
+            <label class="form-label">ABN</label>
+            <InputText class="form-control" @bind-Value="profile.Abn" />
+            <div class="form-text">11 digits, with or without spaces. Checked against the ATO check-digit format before saving.</div>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Email</label>
+            <InputText class="form-control" @bind-Value="profile.Email" />
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Payment Details</label>
+            <InputTextArea class="form-control" @bind-Value="profile.PaymentDetails" />
+            <div class="form-text">How clients pay you — e.g. BSB/account number. Printed on invoices.</div>
+        </div>
+        <div class="mb-3 form-check">
+            <InputCheckbox class="form-check-input" @bind-Value="profile.IsGstRegistered" id="gstCheck" />
+            <label class="form-check-label" for="gstCheck">Registered for GST</label>
+            <div class="form-text">If on, invoices calculate 10% GST on taxable line items by default.</div>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Default Payment Terms (days)</label>
+            <InputNumber class="form-control" @bind-Value="profile.DefaultPaymentTermsDays" />
+            <div class="form-text">Used as the fallback due date when a client has no payment terms override.</div>
+        </div>
+
+        <button type="submit" class="btn btn-primary">Save Profile</button>
+    </EditForm>
+
+    @if (abnError is not null)
+    {
+        <p class="text-danger mt-2">@abnError</p>
+    }
+    @if (errorMessage is not null)
+    {
+        <p class="text-danger mt-2">@errorMessage</p>
+    }
+    @if (savedMessage is not null)
+    {
+        <p class="text-success mt-2">@savedMessage</p>
+    }
+}
+
+@code {
+    private ProfileFormModel profile = new();
+    private bool isLoading = true;
+    private string? abnError;
+    private string? errorMessage;
+    private string? savedMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var existing = await db.ContractorProfiles.FirstOrDefaultAsync();
+
+        if (existing is not null)
+        {
+            profile = new ProfileFormModel
+            {
+                Id = existing.Id,
+                BusinessName = existing.BusinessName,
+                Abn = existing.Abn,
+                Email = existing.Email,
+                PaymentDetails = existing.PaymentDetails,
+                IsGstRegistered = existing.IsGstRegistered,
+                DefaultPaymentTermsDays = existing.DefaultPaymentTermsDays
+            };
+        }
+
+        isLoading = false;
+    }
+
+    private async Task SaveProfile()
+    {
+        abnError = null;
+        errorMessage = null;
+        savedMessage = null;
+
+        if (!AbnValidator.IsValid(profile.Abn))
+        {
+            abnError = "That ABN doesn't pass the ATO check-digit validation. Double-check the 11 digits.";
+            return;
+        }
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var entity = profile.Id is int id
+                ? await db.ContractorProfiles.FirstAsync(p => p.Id == id)
+                : new ContractorProfile { CreatedAt = DateTime.UtcNow };
+
+            entity.BusinessName = profile.BusinessName;
+            entity.Abn = profile.Abn;
+            entity.Email = profile.Email;
+            entity.PaymentDetails = profile.PaymentDetails;
+            entity.IsGstRegistered = profile.IsGstRegistered;
+            entity.DefaultPaymentTermsDays = profile.DefaultPaymentTermsDays;
+            entity.UpdatedAt = DateTime.UtcNow;
+
+            if (entity.Id == 0)
+                db.ContractorProfiles.Add(entity);
+
+            await db.SaveChangesAsync();
+
+            profile.Id = entity.Id;
+            savedMessage = "Saved.";
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Could not save profile: {ex.Message}";
+        }
+    }
+
+    private class ProfileFormModel
+    {
+        public int? Id { get; set; }
+
+        [Required]
+        public string BusinessName { get; set; } = string.Empty;
+
+        [Required]
+        public string Abn { get; set; } = string.Empty;
+
+        [Required, EmailAddress]
+        public string Email { get; set; } = string.Empty;
+
+        public string? PaymentDetails { get; set; }
+
+        public bool IsGstRegistered { get; set; }
+
+        public int DefaultPaymentTermsDays { get; set; } = 14;
+    }
+}
