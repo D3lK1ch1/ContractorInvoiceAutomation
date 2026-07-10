@@ -6,7 +6,7 @@ public class Client
     public string ContactName { get; set; } = string.Empty;
     public string BusinessName { get; set; } = string.Empty;
     public string Email { get; set; } = string.Empty;
-    public string? Notes { get; set; }
+    public string? Abn { get; set; }
     public int? DefaultPaymentTermsDays { get; set; }
     public decimal? DefaultHourlyRate { get; set; }
     public int NextInvoiceSequence { get; set; } = 1;
