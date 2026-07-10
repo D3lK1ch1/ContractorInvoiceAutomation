@@ -1,0 +1,332 @@
+@page "/invoices/new"
+@rendermode InteractiveServer
+@using System.Globalization
+@using ContractorInvoicing.Domain.Entities
+@using ContractorInvoicing.Domain.Services
+@using ContractorInvoicing.Infrastructure.Data
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<ContractorInvoicingDbContext> DbFactory
+@inject IInvoiceCalculationService CalculationService
+@inject IInvoiceNumberService NumberService
+
+<PageTitle>New Invoice</PageTitle>
+
+<h1>New Invoice</h1>
+
+@if (isLoading)
+{
+    <p><em>Loading...</em></p>
+}
+else if (profile is null)
+{
+    <p class="text-danger">You need to save your <a href="/profile">contractor profile</a> first — GST calculation depends on your GST-registered flag.</p>
+}
+else if (clients.Count == 0)
+{
+    <p class="text-danger">You need at least one <a href="/clients">client</a> before creating an invoice.</p>
+}
+else
+{
+    <div class="mb-3">
+        <label class="form-label">Client</label>
+        <select class="form-select" @bind="selectedClientId" @bind:after="OnClientChanged">
+            <option value="0">-- Select a client --</option>
+            @foreach (var c in clients)
+            {
+                <option value="@c.Id">@c.BusinessName</option>
+            }
+        </select>
+    </div>
+
+    @if (selectedClient is not null)
+    {
+        <div class="row mb-3">
+            <div class="col">
+                <label class="form-label">Issue Date</label>
+                <InputDate class="form-control" @bind-Value="issueDate" @bind-Value:after="RecalculateDueDate" />
+            </div>
+            <div class="col">
+                <label class="form-label">Due Date</label>
+                <InputDate class="form-control" @bind-Value="dueDate" />
+            </div>
+        </div>
+        <div class="row mb-3">
+            <div class="col">
+                <label class="form-label">Period Start (optional)</label>
+                <InputDate class="form-control" @bind-Value="periodStart" />
+            </div>
+            <div class="col">
+                <label class="form-label">Period End (optional)</label>
+                <InputDate class="form-control" @bind-Value="periodEnd" />
+            </div>
+        </div>
+
+        <h2>Line Items</h2>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Description</th>
+                    <th>Type</th>
+                    <th>Hours</th>
+                    <th>Rate / Amount</th>
+                    <th>Taxable</th>
+                    <th>Line Total</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var line in lineItems)
+                {
+                    <tr>
+                        <td><input class="form-control" @bind="line.Description" @bind:after="Recalculate" /></td>
+                        <td>
+                            <div class="form-check">
+                                <input type="radio" class="form-check-input" name="type-@line.Key" checked="@line.IsHourly" @onchange="() => SetLineType(line, true)" />
+                                <label class="form-check-label">Hourly</label>
+                            </div>
+                            <div class="form-check">
+                                <input type="radio" class="form-check-input" name="type-@line.Key" checked="@(!line.IsHourly)" @onchange="() => SetLineType(line, false)" />
+                                <label class="form-check-label">Fixed Price</label>
+                            </div>
+                        </td>
+                        <td>
+                            @if (line.IsHourly)
+                            {
+                                <input type="number" step="0.01" class="form-control" @bind="line.Hours" @bind:after="Recalculate" />
+                            }
+                            else
+                            {
+                                <span class="text-muted">—</span>
+                            }
+                        </td>
+                        <td>
+                            @if (line.IsHourly)
+                            {
+                                <input type="number" step="0.01" class="form-control" @bind="line.Rate" @bind:after="Recalculate" />
+                            }
+                            else
+                            {
+                                <input type="number" step="0.01" class="form-control" @bind="line.Amount" @bind:after="Recalculate" />
+                            }
+                        </td>
+                        <td class="text-center"><input type="checkbox" @bind="line.IsTaxable" @bind:after="Recalculate" /></td>
+                        <td>@line.LineTotal.ToString("C", AudCulture)</td>
+                        <td><button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => RemoveLine(line)">Remove</button></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        <button type="button" class="btn btn-secondary mb-3" @onclick="AddLine">+ Add Line Item</button>
+
+        <div class="mb-3">
+            <div>Subtotal: @subtotal.ToString("C", AudCulture)</div>
+            @if (profile.IsGstRegistered)
+            {
+                <div>GST: @gstAmount.ToString("C", AudCulture)</div>
+            }
+            <div><strong>Total: @total.ToString("C", AudCulture)</strong></div>
+        </div>
+
+        @if (errorMessage is not null)
+        {
+            <p class="text-danger">@errorMessage</p>
+        }
+        @if (savedInvoiceNumber is not null)
+        {
+            <p class="text-success">Saved as draft: @savedInvoiceNumber</p>
+        }
+
+        <button type="button" class="btn btn-primary" @onclick="SaveDraft">Save as Draft</button>
+    }
+}
+
+@code {
+    private static readonly CultureInfo AudCulture = CultureInfo.GetCultureInfo("en-AU");
+
+    private bool isLoading = true;
+    private ContractorProfile? profile;
+    private List<Client> clients = [];
+    private int selectedClientId;
+    private Client? selectedClient;
+
+    private DateOnly issueDate = DateOnly.FromDateTime(DateTime.Now);
+    private DateOnly dueDate;
+    private DateOnly? periodStart;
+    private DateOnly? periodEnd;
+
+    private List<LineItemModel> lineItems = [];
+    private int nextLineKey;
+
+    private decimal subtotal;
+    private decimal gstAmount;
+    private decimal total;
+
+    private string? errorMessage;
+    private string? savedInvoiceNumber;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        profile = await db.ContractorProfiles.FirstOrDefaultAsync();
+        clients = await db.Clients.Where(c => !c.IsArchived).OrderBy(c => c.BusinessName).ToListAsync();
+        isLoading = false;
+    }
+
+    private void OnClientChanged()
+    {
+        selectedClient = clients.FirstOrDefault(c => c.Id == selectedClientId);
+        savedInvoiceNumber = null;
+        errorMessage = null;
+
+        if (selectedClient is null)
+        {
+            lineItems = [];
+            return;
+        }
+
+        RecalculateDueDate();
+
+        lineItems = [];
+        AddLine();
+    }
+
+    private void RecalculateDueDate()
+    {
+        if (selectedClient is null)
+            return;
+
+        var termsDays = selectedClient.DefaultPaymentTermsDays ?? profile!.DefaultPaymentTermsDays;
+        dueDate = issueDate.AddDays(termsDays);
+    }
+
+    private void AddLine()
+    {
+        var isHourly = selectedClient?.DefaultHourlyRate is not null;
+        lineItems.Add(new LineItemModel
+        {
+            Key = nextLineKey++,
+            IsHourly = isHourly,
+            Rate = selectedClient?.DefaultHourlyRate ?? 0,
+            IsTaxable = true
+        });
+        Recalculate();
+    }
+
+    private void SetLineType(LineItemModel line, bool isHourly)
+    {
+        line.IsHourly = isHourly;
+        Recalculate();
+    }
+
+    private void RemoveLine(LineItemModel line)
+    {
+        lineItems.Remove(line);
+        Recalculate();
+    }
+
+    private void Recalculate()
+    {
+        var invoice = new Invoice
+        {
+            LineItems = lineItems.Select(l => new InvoiceLineItem
+            {
+                Quantity = l.Quantity,
+                UnitPrice = l.UnitPrice,
+                IsTaxable = l.IsTaxable
+            }).ToList()
+        };
+
+        CalculationService.Recalculate(invoice, profile!.IsGstRegistered);
+
+        for (var i = 0; i < lineItems.Count; i++)
+        {
+            lineItems[i].LineTotal = invoice.LineItems[i].LineTotal;
+        }
+
+        subtotal = invoice.Subtotal;
+        gstAmount = invoice.GstAmount;
+        total = invoice.Total;
+    }
+
+    private async Task SaveDraft()
+    {
+        errorMessage = null;
+        savedInvoiceNumber = null;
+
+        if (selectedClient is null)
+        {
+            errorMessage = "Select a client first.";
+            return;
+        }
+
+        var validLines = lineItems
+            .Where(l => !string.IsNullOrWhiteSpace(l.Description) && l.Quantity > 0)
+            .ToList();
+
+        if (validLines.Count == 0)
+        {
+            errorMessage = "Add at least one line item with a description and a quantity greater than zero.";
+            return;
+        }
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var client = await db.Clients.FirstAsync(c => c.Id == selectedClient.Id);
+
+            var invoiceNumber = NumberService.Generate(client);
+            var termsDays = client.DefaultPaymentTermsDays ?? profile!.DefaultPaymentTermsDays;
+
+            var invoice = new Invoice
+            {
+                ClientId = client.Id,
+                InvoiceNumber = invoiceNumber,
+                IssueDate = issueDate,
+                DueDate = dueDate,
+                PeriodStart = periodStart,
+                PeriodEnd = periodEnd,
+                Terms = $"Within {termsDays} days of issue",
+                Status = InvoiceStatus.Draft,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow,
+                LineItems = validLines.Select((l, i) => new InvoiceLineItem
+                {
+                    Description = l.Description,
+                    Quantity = l.Quantity,
+                    UnitPrice = l.UnitPrice,
+                    IsTaxable = l.IsTaxable,
+                    SortOrder = i
+                }).ToList()
+            };
+
+            CalculationService.Recalculate(invoice, profile!.IsGstRegistered);
+
+            db.Invoices.Add(invoice);
+            await db.SaveChangesAsync();
+
+            savedInvoiceNumber = invoiceNumber;
+
+            lineItems = [];
+            AddLine();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Could not save invoice: {ex.Message}";
+        }
+    }
+
+    private class LineItemModel
+    {
+        public int Key { get; set; }
+        public string Description { get; set; } = string.Empty;
+        public bool IsHourly { get; set; } = true;
+        public decimal Hours { get; set; }
+        public decimal Rate { get; set; }
+        public decimal Amount { get; set; }
+        public bool IsTaxable { get; set; } = true;
+        public decimal LineTotal { get; set; }
+
+        public decimal Quantity => IsHourly ? Hours : 1;
+        public decimal UnitPrice => IsHourly ? Rate : Amount;
+    }
+}

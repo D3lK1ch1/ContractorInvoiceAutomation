@@ -1,0 +1,71 @@
+@page "/invoices"
+@rendermode InteractiveServer
+@using System.Globalization
+@using ContractorInvoicing.Domain.Entities
+@using ContractorInvoicing.Infrastructure.Data
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<ContractorInvoicingDbContext> DbFactory
+
+<PageTitle>Invoices</PageTitle>
+
+<h1>Invoices</h1>
+
+<p>
+    <a class="btn btn-outline-secondary" href="/export/invoices.csv">Export All to CSV</a>
+</p>
+
+@if (invoices is null)
+{
+    <p><em>Loading...</em></p>
+}
+else if (invoices.Count == 0)
+{
+    <p><em>No invoices yet. <a href="/invoices/new">Create one</a>.</em></p>
+}
+else
+{
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Invoice #</th>
+                <th>Client</th>
+                <th>Issue Date</th>
+                <th>Due Date</th>
+                <th>Status</th>
+                <th>Total</th>
+                <th>Outstanding</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var invoice in invoices)
+            {
+                <tr>
+                    <td>@invoice.InvoiceNumber</td>
+                    <td>@invoice.Client?.BusinessName</td>
+                    <td>@invoice.IssueDate.ToString("d MMM yyyy")</td>
+                    <td>@invoice.DueDate.ToString("d MMM yyyy")</td>
+                    <td>@invoice.Status</td>
+                    <td>@invoice.Total.ToString("C", AudCulture)</td>
+                    <td>@invoice.OutstandingBalance.ToString("C", AudCulture)</td>
+                    <td><a href="@($"/export/invoices/{invoice.Id}.csv")">Export CSV</a></td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private static readonly CultureInfo AudCulture = CultureInfo.GetCultureInfo("en-AU");
+
+    private List<Invoice>? invoices;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        invoices = await db.Invoices
+            .Include(i => i.Client)
+            .OrderByDescending(i => i.IssueDate)
+            .ToListAsync();
+    }
+}
