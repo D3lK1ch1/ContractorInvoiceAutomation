@@ -6,7 +6,7 @@ public class InvoiceNumberService : IInvoiceNumberService
 {
     public string Generate(Client client)
     {
-        var number = $"{client.BusinessName} Invoice {client.NextInvoiceSequence:D3}";
+        var number = $"{client.DisplayName} Invoice {client.NextInvoiceSequence:D3}";
         client.NextInvoiceSequence++;
         return number;
     }
