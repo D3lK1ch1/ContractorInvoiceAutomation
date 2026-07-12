@@ -16,7 +16,10 @@ builder.Services.AddDbContextFactory<ContractorInvoicingDbContext>(options =>
 
 builder.Services.AddScoped<IInvoiceCalculationService, InvoiceCalculationService>();
 builder.Services.AddScoped<IInvoiceNumberService, InvoiceNumberService>();
+builder.Services.AddScoped<IInvoiceStatusService, InvoiceStatusService>();
+builder.Services.AddScoped<IPaymentService, PaymentService>();
 builder.Services.AddScoped<IInvoiceCsvService, InvoiceCsvService>();
+builder.Services.AddScoped<IInvoiceXlsxService, InvoiceXlsxService>();
 
 var app = builder.Build();
 
@@ -52,6 +55,18 @@ app.MapGet("/export/invoices/{id:int}.csv", async (int id, IInvoiceCsvService cs
     var safeName = new string(export.InvoiceNumber.Select(c => invalidChars.Contains(c) ? '-' : c).ToArray());
 
     return Results.File(Encoding.UTF8.GetBytes(export.Csv), "text/csv", $"{safeName}.csv");
+});
+
+app.MapGet("/export/invoices/{id:int}.xlsx", async (int id, IInvoiceXlsxService xlsxService) =>
+{
+    var export = await xlsxService.ExportInvoiceAsync(id);
+    if (export is null)
+        return Results.NotFound();
+
+    var invalidChars = Path.GetInvalidFileNameChars();
+    var safeName = new string(export.InvoiceNumber.Select(c => invalidChars.Contains(c) ? '-' : c).ToArray());
+
+    return Results.File(export.Content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", $"{safeName}.xlsx");
 });
 
 app.Run();
