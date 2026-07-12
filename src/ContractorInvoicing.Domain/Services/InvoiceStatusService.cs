@@ -6,10 +6,10 @@ public class InvoiceStatusService : IInvoiceStatusService
 {
     public void Apply(Invoice invoice, DateOnly today)
     {
+        invoice.OutstandingBalance = invoice.Total - invoice.AmountPaid;
+
         if (invoice.Status == InvoiceStatus.Draft)
             return;
-
-        invoice.OutstandingBalance = invoice.Total - invoice.AmountPaid;
 
         if (invoice.OutstandingBalance <= 0)
         {
