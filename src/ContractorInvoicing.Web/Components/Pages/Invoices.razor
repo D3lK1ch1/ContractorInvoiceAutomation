@@ -5,6 +5,7 @@
 @using ContractorInvoicing.Infrastructure.Data
 @using Microsoft.EntityFrameworkCore
 @inject IDbContextFactory<ContractorInvoicingDbContext> DbFactory
+@inject IJSRuntime JS
 
 <PageTitle>Invoices</PageTitle>
 
@@ -41,14 +42,17 @@ else
             @foreach (var invoice in invoices)
             {
                 <tr>
-                    <td>@invoice.InvoiceNumber</td>
-                    <td>@invoice.Client?.BusinessName</td>
+                    <td><a href="@($"/invoices/{invoice.Id}")">@invoice.InvoiceNumber</a></td>
+                    <td>@invoice.Client?.DisplayName</td>
                     <td>@invoice.IssueDate.ToString("d MMM yyyy")</td>
                     <td>@invoice.DueDate.ToString("d MMM yyyy")</td>
                     <td>@invoice.Status</td>
                     <td>@invoice.Total.ToString("C", AudCulture)</td>
                     <td>@invoice.OutstandingBalance.ToString("C", AudCulture)</td>
-                    <td><a href="@($"/export/invoices/{invoice.Id}.csv")">Export CSV</a></td>
+                    <td>
+                        <a href="@($"/export/invoices/{invoice.Id}.xlsx")">Export XLSX</a>
+                        <button type="button" class="btn btn-sm btn-outline-danger ms-2" @onclick="() => DeleteInvoice(invoice.Id)">Delete</button>
+                    </td>
                 </tr>
             }
         </tbody>
@@ -62,10 +66,36 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        await LoadInvoices();
+    }
+
+    private async Task LoadInvoices()
+    {
         await using var db = await DbFactory.CreateDbContextAsync();
         invoices = await db.Invoices
             .Include(i => i.Client)
             .OrderByDescending(i => i.IssueDate)
             .ToListAsync();
+    }
+
+    private async Task DeleteInvoice(int id)
+    {
+        var confirmed = await JS.InvokeAsync<bool>("confirm", "Delete this invoice? This cannot be undone.");
+        if (!confirmed)
+            return;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        var clientId = await db.Invoices.Where(i => i.Id == id).Select(i => i.ClientId).FirstOrDefaultAsync();
+        await db.Invoices.Where(i => i.Id == id).ExecuteDeleteAsync();
+
+        var clientHasInvoicesLeft = await db.Invoices.AnyAsync(i => i.ClientId == clientId);
+        if (!clientHasInvoicesLeft)
+        {
+            await db.Clients.Where(c => c.Id == clientId)
+                .ExecuteUpdateAsync(s => s.SetProperty(c => c.NextInvoiceSequence, 1));
+        }
+
+        await LoadInvoices();
     }
 }

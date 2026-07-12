@@ -8,6 +8,7 @@
 @inject IDbContextFactory<ContractorInvoicingDbContext> DbFactory
 @inject IInvoiceCalculationService CalculationService
 @inject IInvoiceNumberService NumberService
+@inject IInvoiceStatusService StatusService
 
 <PageTitle>New Invoice</PageTitle>
 
@@ -33,7 +34,7 @@ else
             <option value="0">-- Select a client --</option>
             @foreach (var c in clients)
             {
-                <option value="@c.Id">@c.BusinessName</option>
+                <option value="@c.Id">@c.DisplayName</option>
             }
         </select>
     </div>
@@ -168,7 +169,7 @@ else
     {
         await using var db = await DbFactory.CreateDbContextAsync();
         profile = await db.ContractorProfiles.FirstOrDefaultAsync();
-        clients = await db.Clients.Where(c => !c.IsArchived).OrderBy(c => c.BusinessName).ToListAsync();
+        clients = await db.Clients.Where(c => !c.IsArchived).OrderBy(c => c.BusinessName ?? c.ContactName).ToListAsync();
         isLoading = false;
     }
 
@@ -300,6 +301,7 @@ else
             };
 
             CalculationService.Recalculate(invoice, profile!.IsGstRegistered);
+            StatusService.Apply(invoice, issueDate);
 
             db.Invoices.Add(invoice);
             await db.SaveChangesAsync();
