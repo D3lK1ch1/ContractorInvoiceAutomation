@@ -32,7 +32,7 @@ public class InvoiceCsvService(IDbContextFactory<ContractorInvoicingDbContext> d
         {
             sb.AppendLine(Row(
                 invoice.InvoiceNumber,
-                invoice.Client?.BusinessName ?? "",
+                invoice.Client?.DisplayName ?? "",
                 invoice.IssueDate.ToString("yyyy-MM-dd"),
                 invoice.DueDate.ToString("yyyy-MM-dd"),
                 invoice.Status.ToString(),
@@ -71,7 +71,7 @@ public class InvoiceCsvService(IDbContextFactory<ContractorInvoicingDbContext> d
         sb.AppendLine();
 
         sb.AppendLine(Row("FROM", "", "BILL TO"));
-        sb.AppendLine(Row(profile?.BusinessName ?? "", "", client?.BusinessName ?? ""));
+        sb.AppendLine(Row(profile?.BusinessName ?? "", "", client?.DisplayName ?? ""));
         sb.AppendLine(Row(
             profile?.Abn is { Length: > 0 } pAbn ? $"ABN {pAbn}" : "",
             "",
