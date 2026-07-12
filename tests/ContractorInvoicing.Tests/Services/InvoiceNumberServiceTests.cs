@@ -50,6 +50,16 @@ public class InvoiceNumberServiceTests
     }
 
     [Fact]
+    public void Generate_FallsBackToContactName_WhenBusinessNameIsNull()
+    {
+        var client = new Client { ContactName = "Jane Smith", BusinessName = null, NextInvoiceSequence = 1 };
+
+        var result = _sut.Generate(client);
+
+        Assert.Equal("Jane Smith Invoice 001", result);
+    }
+
+    [Fact]
     public void Generate_EachClientHasIndependentSequence()
     {
         var acme = new Client { BusinessName = "Acme", NextInvoiceSequence = 4 };
