@@ -1,0 +1,176 @@
+@page "/invoices/{Id:int}"
+@rendermode InteractiveServer
+@using System.Globalization
+@using ContractorInvoicing.Domain.Entities
+@using ContractorInvoicing.Domain.Services
+@using ContractorInvoicing.Infrastructure.Data
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<ContractorInvoicingDbContext> DbFactory
+@inject IPaymentService PaymentService
+
+<PageTitle>Invoice Detail</PageTitle>
+
+@if (isLoading)
+{
+    <p><em>Loading...</em></p>
+}
+else if (invoice is null)
+{
+    <p class="text-danger">Invoice not found. <a href="/invoices">Back to invoices</a>.</p>
+}
+else
+{
+    <h1>@invoice.InvoiceNumber</h1>
+    <p><a href="/invoices">&laquo; Back to invoices</a></p>
+
+    <div class="row mb-3">
+        <div class="col">
+            <div><strong>Client:</strong> @invoice.Client?.DisplayName</div>
+            <div><strong>Status:</strong> @invoice.Status</div>
+        </div>
+        <div class="col">
+            <div><strong>Issue date:</strong> @invoice.IssueDate.ToString("d MMM yyyy")</div>
+            <div><strong>Due date:</strong> @invoice.DueDate.ToString("d MMM yyyy")</div>
+        </div>
+        <div class="col">
+            <div><strong>Total:</strong> @invoice.Total.ToString("C", AudCulture)</div>
+            <div><strong>Paid:</strong> @invoice.AmountPaid.ToString("C", AudCulture)</div>
+            <div><strong>Outstanding:</strong> @invoice.OutstandingBalance.ToString("C", AudCulture)</div>
+        </div>
+    </div>
+
+    <h2>Line Items</h2>
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Description</th>
+                <th>Quantity</th>
+                <th>Rate</th>
+                <th>Line Total</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var line in invoice.LineItems.OrderBy(l => l.SortOrder))
+            {
+                <tr>
+                    <td>@line.Description</td>
+                    <td>@line.Quantity</td>
+                    <td>@line.UnitPrice.ToString("C", AudCulture)</td>
+                    <td>@line.LineTotal.ToString("C", AudCulture)</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    <h2>Payments</h2>
+    @if (invoice.Payments.Count == 0)
+    {
+        <p><em>No payments recorded yet.</em></p>
+    }
+    else
+    {
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Amount</th>
+                    <th>Reference</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var payment in invoice.Payments.OrderBy(p => p.PaidAt))
+                {
+                    <tr>
+                        <td>@payment.PaidAt.ToString("d MMM yyyy")</td>
+                        <td>@payment.Amount.ToString("C", AudCulture)</td>
+                        <td>@payment.Reference</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+
+    @if (invoice.OutstandingBalance > 0)
+    {
+        <h2>Record Payment</h2>
+        <div class="row mb-3">
+            <div class="col">
+                <label class="form-label">Amount</label>
+                <input type="number" step="0.01" class="form-control" @bind="paymentAmount" />
+            </div>
+            <div class="col">
+                <label class="form-label">Paid Date</label>
+                <InputDate class="form-control" @bind-Value="paymentDate" />
+            </div>
+            <div class="col">
+                <label class="form-label">Reference (optional)</label>
+                <input class="form-control" @bind="paymentReference" />
+            </div>
+        </div>
+
+        @if (paymentError is not null)
+        {
+            <p class="text-danger">@paymentError</p>
+        }
+
+        <button type="button" class="btn btn-primary" @onclick="RecordPayment">Record Payment</button>
+    }
+}
+
+@code {
+    [Parameter]
+    public int Id { get; set; }
+
+    private static readonly CultureInfo AudCulture = CultureInfo.GetCultureInfo("en-AU");
+
+    private bool isLoading = true;
+    private Invoice? invoice;
+
+    private decimal paymentAmount;
+    private DateOnly paymentDate = DateOnly.FromDateTime(DateTime.Now);
+    private string? paymentReference;
+    private string? paymentError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadInvoice();
+        isLoading = false;
+    }
+
+    private async Task LoadInvoice()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        invoice = await db.Invoices
+            .Include(i => i.Client)
+            .Include(i => i.LineItems)
+            .Include(i => i.Payments)
+            .FirstOrDefaultAsync(i => i.Id == Id);
+    }
+
+    private async Task RecordPayment()
+    {
+        paymentError = null;
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var invoiceEntity = await db.Invoices.FirstAsync(i => i.Id == Id);
+
+            var payment = PaymentService.RecordPayment(
+                invoiceEntity, paymentAmount, paymentDate,
+                method: null, reference: paymentReference, notes: null,
+                today: DateOnly.FromDateTime(DateTime.Now));
+
+            db.Payments.Add(payment);
+            await db.SaveChangesAsync();
+
+            paymentAmount = 0;
+            paymentReference = null;
+            await LoadInvoice();
+        }
+        catch (ArgumentException ex)
+        {
+            paymentError = ex.Message;
+        }
+    }
+}
