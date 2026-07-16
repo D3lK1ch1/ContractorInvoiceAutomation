@@ -7,6 +7,7 @@
 @using Microsoft.EntityFrameworkCore
 @inject IDbContextFactory<ContractorInvoicingDbContext> DbFactory
 @inject IPaymentService PaymentService
+@inject IInvoiceStatusService InvoiceStatusService
 
 <PageTitle>Invoice Detail</PageTitle>
 
@@ -27,6 +28,10 @@ else
         <div class="col">
             <div><strong>Client:</strong> @invoice.Client?.DisplayName</div>
             <div><strong>Status:</strong> @invoice.Status</div>
+            @if (invoice.Status == InvoiceStatus.Draft)
+            {
+                <button type="button" class="btn btn-sm btn-outline-primary mt-1" @onclick="MarkAsSent">Mark as Sent</button>
+            }
         </div>
         <div class="col">
             <div><strong>Issue date:</strong> @invoice.IssueDate.ToString("d MMM yyyy")</div>
@@ -145,6 +150,18 @@ else
             .Include(i => i.LineItems)
             .Include(i => i.Payments)
             .FirstOrDefaultAsync(i => i.Id == Id);
+    }
+
+    private async Task MarkAsSent()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var invoiceEntity = await db.Invoices.FirstAsync(i => i.Id == Id);
+
+        invoiceEntity.Status = InvoiceStatus.Sent;
+        InvoiceStatusService.Apply(invoiceEntity, DateOnly.FromDateTime(DateTime.Now));
+
+        await db.SaveChangesAsync();
+        await LoadInvoice();
     }
 
     private async Task RecordPayment()

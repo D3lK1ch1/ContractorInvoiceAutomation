@@ -8,6 +8,9 @@ public class PaymentService(IInvoiceStatusService invoiceStatusService) : IPayme
                                  string? method, string? reference, string? notes,
                                  DateOnly today)
     {
+        if (invoice.Status == InvoiceStatus.Draft)
+            throw new ArgumentException("Invoice must be marked as sent before recording a payment.", nameof(invoice));
+
         if (amount <= 0)
             throw new ArgumentException("Payment amount must be greater than zero.", nameof(amount));
 
