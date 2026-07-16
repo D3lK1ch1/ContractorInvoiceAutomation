@@ -33,11 +33,10 @@ Included:
 - Australian invoice fields such as ABN, AUD, GST-aware totals, issue date, due date, and payment terms.
 - Invoice status tracking.
 - Payment recording.
-- PDF invoice generation.
+- Styled invoice export (.xlsx) — a client-ready document, not just a data dump. Replaces PDF generation; see §14 decision log, 2026-07-15.
 - CSV export of invoice data (for archiving in a Google Sheets tab or similar — no live API integration in v1).
 - Dashboard for totals, overdue invoices, and next actions.
 - Practical AI assistance for wording, follow-up drafts, and anomaly checks.
-- Seed demo data for portfolio presentation.
 
 ## 4. Out of Scope for V1
 
@@ -46,6 +45,7 @@ The following should be deliberately excluded from v1 to keep the first version 
 - Multi-tenant SaaS accounts.
 - Stripe or card payment collection.
 - Automatic email sending.
+- PDF invoice generation (superseded by styled .xlsx export — see §14 decision log, 2026-07-15).
 - Bank feed integration.
 - Live Google Sheets / Drive API write-back (v1 covers CSV export only; the user imports/pastes it into Sheets manually).
 - Full accounting ledger.
@@ -54,6 +54,7 @@ The following should be deliberately excluded from v1 to keep the first version 
 - Multi-country tax compliance.
 - Mobile app.
 - Role-based team permissions.
+- Seed demo data (dropped 2026-07-15 — the app is used live with real data from the start, not staged for portfolio demo; see §14 decision log).
 
 These can be discussed as future roadmap items after the core workflow is working.
 
@@ -134,7 +135,7 @@ Invoice behaviour:
 - Calculate totals immediately.
 - Save as draft.
 - Mark as sent.
-- Export PDF.
+- Export styled invoice document (.xlsx) — client-ready, with formatting CSV can't carry.
 - Export CSV (spreadsheet-compatible, for archiving in Google Sheets or similar).
 
 Line item types:
@@ -324,7 +325,7 @@ Recommended stack:
 - Entity Framework Core.
 - SQLite for local development.
 - Option to migrate to PostgreSQL later.
-- A .NET PDF generation library with suitable licensing.
+- A .NET library for generating styled .xlsx workbooks.
 - Built-in dependency injection.
 - xUnit or NUnit for tests.
 - Playwright or bUnit for selected UI tests if the UI grows.
@@ -335,7 +336,7 @@ Architecture:
 - Keep domain logic separate from UI components.
 - Keep invoice calculation logic testable without the database.
 - Keep AI integration behind an interface.
-- Keep PDF generation behind a service interface.
+- Keep xlsx export behind a service interface.
 
 Suggested service boundaries:
 
@@ -344,7 +345,7 @@ Suggested service boundaries:
 - InvoiceStatusService.
 - PaymentService.
 - AutomationTaskService.
-- InvoicePdfService.
+- InvoiceXlsxService.
 - InvoiceCsvService.
 - InvoiceAiAssistant.
 
@@ -368,7 +369,7 @@ Integration tests:
 - Create invoice with line items.
 - Record payment.
 - Verify dashboard totals.
-- Generate invoice PDF from saved invoice data.
+- Generate styled invoice .xlsx export from saved invoice data.
 - Generate invoice CSV export from saved invoice data.
 
 UI acceptance scenarios:
@@ -376,7 +377,7 @@ UI acceptance scenarios:
 - User creates contractor profile.
 - User creates client.
 - User creates invoice.
-- User exports invoice PDF.
+- User exports invoice as .xlsx.
 - User marks invoice as sent.
 - User records partial payment.
 - User records full payment.
@@ -391,14 +392,13 @@ V1 is complete when:
 - A user can create and manage clients.
 - A user can create an invoice with multiple line items.
 - The app correctly calculates subtotal, GST, total, paid amount, and outstanding balance.
-- The app can export a professional PDF invoice.
+- The app can export a professional, styled invoice document (.xlsx).
 - The app can export invoice data as CSV for spreadsheet archiving.
 - The user can record one or more payments.
 - Invoice statuses update correctly.
 - The dashboard reflects invoice and payment state.
 - The app generates follow-up task recommendations.
 - AI can draft invoice wording and payment reminders through a replaceable service.
-- Demo data is available without exposing real personal or client information.
 - Core business logic has automated tests.
 - A full CSV export of all invoices (not just per-invoice) is producible on demand. This is the defined backup path: the user can export the complete invoice history at any time without manual per-invoice steps. Required because ATO record-keeping obligations run for 5 years and the app stores data in a local SQLite file with no automatic backup.
 
@@ -669,10 +669,107 @@ can add borders/bold/color), building a browser-based preview before
 download, or something else. Decide the actual mechanism before writing
 code.
 
-### Next unit (not started)
+### Done — 2026-07-13 (not logged at the time)
 
-- Pick between: `AutomationTaskService` (deterministic follow-up task
-  scheduling from due dates and payment state, section 6.5), payment
-  recording UI (wire up the already-built `PaymentService` to a page),
-  or the visual CSV/export formatting work above once scoped.
+Committed but not written up in this log until now:
+
+- Payment recording UI (`InvoiceDetail.razor`) — wires the already-built
+  `PaymentService` to a page. Click into an invoice, record a payment,
+  outstanding balance and status recalculate via `InvoiceStatusService`.
+  Answers last session's "Next unit" option 2.
+- `InvoiceXlsxService` (Infrastructure) + `/export/invoices/{id}.xlsx`
+  endpoint — generates a styled, client-ready invoice workbook (borders,
+  bold, alignment) directly from saved invoice data. This is the answer to
+  last session's open question ("visually edit the CSV output... styled
+  `.xlsx` instead of `.csv`?") — decided in favor of xlsx over a browser
+  preview or other mechanism.
+- `IInvoiceStatusService`, `IPaymentService`, `IInvoiceXlsxService` registered
+  in DI (`Program.cs`).
+- Some invoice display fields switched from business name to contact name
+  where more appropriate, with matching test updates
+  (`InvoiceNumberServiceTests.cs`).
+
+### Spec decisions — 2026-07-15
+
+- **PDF dropped in favor of xlsx.** `InvoicePdfService` is removed from the
+  spec (sections 3, 6.3, 10, 11, 12) and replaced with the already-built
+  `InvoiceXlsxService`. Reasoning: xlsx solves the same problem (CSV can't
+  carry bold/borders/alignment) with a library that's simpler to work with
+  in .NET than PDF generation, and it's already shipped and working — no
+  reason to build a second export mechanism for the same job. PDF generation
+  moved to the out-of-scope list (section 4) rather than deleted outright,
+  in case a client-facing PDF is specifically requested later.
+- **Seed demo data dropped from v1 scope entirely** (was section 3 and an
+  acceptance criterion in section 12). The app will be used live with real
+  data from the start rather than staged with fake data for portfolio
+  presentation, so there's no seed dataset to build or maintain. Moved to
+  the out-of-scope list (section 4).
+- **AI features (section 8) stay in v1 scope but are resequenced** — Dashboard
+  (section 9) is the next unit; AI assistance comes after. Not a scope cut,
+  just build order: dashboard is the app's front door and has no screen yet
+  (`/` is still the unmodified Blazor template), so it's a bigger gap in a
+  demo-first walkthrough than AI drafting is.
+
+### Known issue, still not fixed — found 2026-07-15
+
+`InvoiceStatusService.Apply()` returns immediately if `invoice.Status ==
+InvoiceStatus.Draft` (never re-evaluates it), and no UI action anywhere sets
+an invoice to `Sent`. Net effect: an invoice created and left as Draft stays
+"Draft" forever in the database even after a payment is recorded against it —
+`OutstandingBalance` updates correctly, but `Status` doesn't move to Paid/
+PartiallyPaid/Overdue. `Apply()` is also only ever called from
+`PaymentService.RecordPayment` — there's no background job or on-load check,
+so even a non-Draft invoice's status is a snapshot from the last payment
+event, not a live value (e.g. `Sent → Overdue` only updates the next time
+money moves against that invoice, not the moment the due date passes).
+
+**Decision (2026-07-15): fix deferred, not bundled with the dashboard unit.**
+Dashboard was built to route around the bug instead — see below.
+
+### Done — 2026-07-15
+
+Dashboard (section 9) — first screen after launch. `Dashboard.razor` added at
+`/`, replacing the unmodified Blazor template (`Home.razor` deleted, `NavMenu`
+label changed from "Home" to "Dashboard"). Same pattern as `Invoices.razor`:
+page queries the DB directly via `IDbContextFactory`, no new service layer.
+
+- Total invoiced this month, total paid this month, outstanding balance,
+  overdue balance, overdue invoice count, upcoming due (7-day window,
+  undocumented in spec — picked a number), recent payments (last 5), client
+  income breakdown (Invoiced/Paid/Outstanding per client, all-time), monthly
+  income trend (last 6 months paid, plain CSS bar chart, no charting
+  library added).
+- **Outstanding/Overdue are computed from `OutstandingBalance` and `DueDate`
+  directly, not from `Invoice.Status`.** Deliberate: since the Draft-status
+  bug above means `Status` can't be trusted yet, the dashboard's numbers are
+  correct regardless of whether that bug is ever fixed — only a literal
+  `Status` column display (not built) would still read wrong.
+- **"Recommended next actions" (a section 9 requirement) was built, then
+  removed** at the user's request. First pass computed a deterministic
+  read-only list from due dates/balances (the section 6.5 reminder rules) with
+  no persistence and no mark-done/ignore. Reason for removal: not scoped as
+  part of this unit. Still an open requirement — real version needs
+  `AutomationTaskService` (section 6.5) and/or the AI "suggest next actions"
+  feature (section 8), neither built yet.
+- `dotnet build`: 0 warnings, 0 errors.
+
+### Fixed — 2026-07-15
+
+`.gitignore` was missing the `Assets/` entry despite the 2026-07-10 log entry
+above claiming it was added — `Assets/` (real client invoice, ABN, bank
+details) was sitting untracked in `git status`, one `git add -A` away from
+being committed. Added `Assets/` to `.gitignore` for real this time.
+
+### Next unit (not decided)
+
+Dashboard is done except "Recommended next actions" (deferred, needs
+`AutomationTaskService` or AI next-actions first). Two open candidates for
+next unit, not yet chosen between:
+
+- Fix the Draft-status bug (add a "Mark as sent" action so invoices can
+  leave Draft; the Sent/PartiallyPaid/Overdue/Paid logic in
+  `InvoiceStatusService` is already correct and just needs a way to be
+  reached).
+- AI features (section 8) — already resequenced to come after Dashboard per
+  the 2026-07-15 decision above.
 
