@@ -726,6 +726,16 @@ money moves against that invoice, not the moment the due date passes).
 **Decision (2026-07-15): fix deferred, not bundled with the dashboard unit.**
 Dashboard was built to route around the bug instead — see below.
 
+**Partially fixed — 2026-07-16.** The Draft-forever half of this is resolved
+(see "Done — 2026-07-16" below). Still open: `Apply()` is only ever called
+from `PaymentService.RecordPayment` and the new `MarkAsSent` action — there's
+still no background job or on-load recompute, so a `Sent` invoice sitting
+untouched past its due date stays `Sent` instead of flipping to `Overdue` the
+moment the due date passes; it only updates the next time a payment or
+mark-sent event runs `Apply()`. **Decision (2026-07-16): defer.** Would need
+either a recompute-on-load check or a scheduled job, neither of which exists
+yet — not worth adding for this one case right now.
+
 ### Done — 2026-07-15
 
 Dashboard (section 9) — first screen after launch. `Dashboard.razor` added at
@@ -760,16 +770,38 @@ above claiming it was added — `Assets/` (real client invoice, ABN, bank
 details) was sitting untracked in `git status`, one `git add -A` away from
 being committed. Added `Assets/` to `.gitignore` for real this time.
 
+### Done — 2026-07-16
+
+Fixed the Draft-status half of the known issue above (found while checking
+invoice behaviour against this spec: a partially/fully paid invoice was
+staying "Draft" instead of updating status).
+
+- **"Mark as Sent" action** added to `InvoiceDetail.razor` — button shown
+  only when `Status == Draft`. On click, sets `Status = Sent` then runs
+  `InvoiceStatusService.Apply()` (the same recalculation `PaymentService`
+  already uses), so an invoice that already had payments recorded while in
+  Draft lands on the correct `PartiallyPaid`/`Paid` status immediately
+  instead of needing another payment event to correct itself.
+- **`PaymentService.RecordPayment` now rejects payments against Draft
+  invoices**, throwing `ArgumentException("Invoice must be marked as sent
+  before recording a payment.")`. Matches the spec's literal "Draft: not
+  sent" meaning (section 6.4) — a Draft invoice shouldn't be payable at all,
+  it should be sent first. `InvoiceDetail.razor`'s existing
+  `catch (ArgumentException)` block already surfaces this as `paymentError`,
+  no UI change needed there.
+- 1 new unit test (`RecordPayment_DraftInvoice_Throws`) in
+  `PaymentServiceTests.cs`. `dotnet test`: 29 passed, 0 failed. `dotnet
+  build`: 0 warnings, 0 errors.
+- Remaining half of the known issue (Overdue-by-time) deferred — see
+  updated note above.
+
 ### Next unit (not decided)
 
 Dashboard is done except "Recommended next actions" (deferred, needs
-`AutomationTaskService` or AI next-actions first). Two open candidates for
-next unit, not yet chosen between:
+`AutomationTaskService` or AI next-actions first). The Draft-status bug is
+now handled (see "Done — 2026-07-16" above, Overdue-by-time still deferred).
+Next candidate:
 
-- Fix the Draft-status bug (add a "Mark as sent" action so invoices can
-  leave Draft; the Sent/PartiallyPaid/Overdue/Paid logic in
-  `InvoiceStatusService` is already correct and just needs a way to be
-  reached).
 - AI features (section 8) — already resequenced to come after Dashboard per
   the 2026-07-15 decision above.
 
