@@ -1,0 +1,195 @@
+@page "/"
+@rendermode InteractiveServer
+@using System.Globalization
+@using ContractorInvoicing.Domain.Entities
+@using ContractorInvoicing.Infrastructure.Data
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<ContractorInvoicingDbContext> DbFactory
+
+<PageTitle>Dashboard</PageTitle>
+
+<h1>Dashboard</h1>
+
+@if (invoices is null)
+{
+    <p><em>Loading...</em></p>
+}
+else if (invoices.Count == 0)
+{
+    <p><em>No invoices yet. <a href="/clients">Add a client</a> and <a href="/invoices/new">create your first invoice</a>.</em></p>
+}
+else
+{
+    <div class="row row-cols-2 row-cols-md-5 g-3 mb-4">
+        <div class="col"><div class="border rounded p-3"><div class="text-muted small">Invoiced this month</div><div class="fs-4">@Money(invoicedThisMonth)</div></div></div>
+        <div class="col"><div class="border rounded p-3"><div class="text-muted small">Paid this month</div><div class="fs-4">@Money(paidThisMonth)</div></div></div>
+        <div class="col"><div class="border rounded p-3"><div class="text-muted small">Outstanding balance</div><div class="fs-4">@Money(outstandingBalance)</div></div></div>
+        <div class="col"><div class="border rounded p-3"><div class="text-muted small">Overdue balance</div><div class="fs-4">@Money(overdueBalance)</div></div></div>
+        <div class="col"><div class="border rounded p-3"><div class="text-muted small">Overdue invoices</div><div class="fs-4">@overdueCount</div></div></div>
+    </div>
+
+    <div class="row g-4 mb-4">
+        <div class="col-md-6">
+            <h2 class="h5">Upcoming due (next 7 days)</h2>
+            @if (upcomingDue.Count == 0)
+            {
+                <p class="text-muted"><em>Nothing due in the next 7 days.</em></p>
+            }
+            else
+            {
+                <table class="table table-sm">
+                    <thead><tr><th>Invoice</th><th>Client</th><th>Due</th><th>Outstanding</th></tr></thead>
+                    <tbody>
+                        @foreach (var i in upcomingDue)
+                        {
+                            <tr>
+                                <td><a href="@($"/invoices/{i.Id}")">@i.InvoiceNumber</a></td>
+                                <td>@i.Client?.DisplayName</td>
+                                <td>@i.DueDate.ToString("d MMM")</td>
+                                <td>@Money(i.OutstandingBalance)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+
+        <div class="col-md-6">
+            <h2 class="h5">Recent payments</h2>
+            @if (recentPayments.Count == 0)
+            {
+                <p class="text-muted"><em>No payments recorded yet.</em></p>
+            }
+            else
+            {
+                <table class="table table-sm">
+                    <thead><tr><th>Invoice</th><th>Client</th><th>Paid</th><th>Amount</th></tr></thead>
+                    <tbody>
+                        @foreach (var p in recentPayments)
+                        {
+                            <tr>
+                                <td><a href="@($"/invoices/{p.Invoice.Id}")">@p.Invoice.InvoiceNumber</a></td>
+                                <td>@p.Invoice.Client?.DisplayName</td>
+                                <td>@p.Payment.PaidAt.ToString("d MMM")</td>
+                                <td>@Money(p.Payment.Amount)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+
+    <div class="row g-4 mb-4">
+        <div class="col-md-6">
+            <h2 class="h5">Client income breakdown</h2>
+            <table class="table table-sm">
+                <thead><tr><th>Client</th><th>Invoiced</th><th>Paid</th><th>Outstanding</th></tr></thead>
+                <tbody>
+                    @foreach (var c in clientBreakdown)
+                    {
+                        <tr>
+                            <td>@c.ClientName</td>
+                            <td>@Money(c.Invoiced)</td>
+                            <td>@Money(c.Paid)</td>
+                            <td>@Money(c.Outstanding)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="col-md-6">
+            <h2 class="h5">Monthly income trend (paid, last 6 months)</h2>
+            <div class="d-flex align-items-end gap-2" style="height: 140px;">
+                @foreach (var m in monthlyTrend)
+                {
+                    var heightPct = maxMonthlyPaid <= 0 ? 0 : (double)(m.Paid / maxMonthlyPaid) * 100;
+                    <div class="d-flex flex-column align-items-center" style="width: 3rem;">
+                        <div class="text-muted small">@Money(m.Paid)</div>
+                        <div class="bg-primary w-100" style="height: @(heightPct)%; min-height: 2px;"></div>
+                        <div class="small mt-1">@m.Label</div>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private static readonly CultureInfo AudCulture = CultureInfo.GetCultureInfo("en-AU");
+
+    private List<Invoice>? invoices;
+
+    private decimal invoicedThisMonth;
+    private decimal paidThisMonth;
+    private decimal outstandingBalance;
+    private decimal overdueBalance;
+    private int overdueCount;
+
+    private List<Invoice> upcomingDue = [];
+    private List<(Invoice Invoice, Payment Payment)> recentPayments = [];
+    private List<ClientBreakdownRow> clientBreakdown = [];
+    private List<MonthlyTrendRow> monthlyTrend = [];
+    private decimal maxMonthlyPaid;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        invoices = await db.Invoices
+            .Include(i => i.Client)
+            .Include(i => i.Payments)
+            .ToListAsync();
+
+        if (invoices.Count == 0)
+            return;
+
+        var today = DateOnly.FromDateTime(DateTime.Today);
+
+        invoicedThisMonth = invoices
+            .Where(i => i.IssueDate.Year == today.Year && i.IssueDate.Month == today.Month)
+            .Sum(i => i.Total);
+
+        var allPayments = invoices.SelectMany(i => i.Payments.Select(p => (Invoice: i, Payment: p))).ToList();
+
+        paidThisMonth = allPayments
+            .Where(x => x.Payment.PaidAt.Year == today.Year && x.Payment.PaidAt.Month == today.Month)
+            .Sum(x => x.Payment.Amount);
+
+        outstandingBalance = invoices.Where(i => i.OutstandingBalance > 0).Sum(i => i.OutstandingBalance);
+
+        var overdueInvoices = invoices.Where(i => i.DueDate < today && i.OutstandingBalance > 0).ToList();
+        overdueBalance = overdueInvoices.Sum(i => i.OutstandingBalance);
+        overdueCount = overdueInvoices.Count;
+
+        upcomingDue = invoices
+            .Where(i => i.DueDate >= today && i.DueDate <= today.AddDays(7) && i.OutstandingBalance > 0)
+            .OrderBy(i => i.DueDate)
+            .ToList();
+
+        recentPayments = allPayments
+            .OrderByDescending(x => x.Payment.PaidAt)
+            .ThenByDescending(x => x.Payment.CreatedAt)
+            .Take(5)
+            .ToList();
+
+        clientBreakdown = invoices
+            .GroupBy(i => i.Client?.DisplayName ?? "(unknown client)")
+            .Select(g => new ClientBreakdownRow(g.Key, g.Sum(i => i.Total), g.Sum(i => i.AmountPaid), g.Sum(i => i.OutstandingBalance)))
+            .OrderByDescending(c => c.Paid)
+            .ToList();
+
+        monthlyTrend = Enumerable.Range(0, 6)
+            .Select(offset => today.AddMonths(-5 + offset))
+            .Select(month => new MonthlyTrendRow(
+                month.ToString("MMM", CultureInfo.InvariantCulture),
+                allPayments.Where(x => x.Payment.PaidAt.Year == month.Year && x.Payment.PaidAt.Month == month.Month).Sum(x => x.Payment.Amount)))
+            .ToList();
+        maxMonthlyPaid = monthlyTrend.Count == 0 ? 0 : monthlyTrend.Max(m => m.Paid);
+    }
+
+    private static string Money(decimal value) => value.ToString("C", AudCulture);
+
+    private record ClientBreakdownRow(string ClientName, decimal Invoiced, decimal Paid, decimal Outstanding);
+    private record MonthlyTrendRow(string Label, decimal Paid);
+}
