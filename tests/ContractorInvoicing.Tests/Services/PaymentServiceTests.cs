@@ -52,6 +52,16 @@ public class PaymentServiceTests
     }
 
     [Fact]
+    public void RecordPayment_DraftInvoice_Throws()
+    {
+        var invoice = SentInvoice(1000m);
+        invoice.Status = InvoiceStatus.Draft;
+
+        Assert.Throws<ArgumentException>(() =>
+            _sut.RecordPayment(invoice, 500m, Today, null, null, null, Today));
+    }
+
+    [Fact]
     public void RecordPayment_ZeroAmount_Throws()
     {
         var invoice = SentInvoice(1000m);
